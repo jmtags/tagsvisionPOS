@@ -20,6 +20,7 @@ import {
   X,
   ShieldCheck,
   Copy,
+  Pencil,
 } from 'lucide-react';
 import { supabase } from './client';
 import {
@@ -27,6 +28,7 @@ import {
   can,
   emptyData,
   invoiceStatus,
+  invoiceEditable,
   lineAmount,
   money,
   paidAmount,
@@ -49,6 +51,7 @@ import { Badge, Empty, Field, Modal, Stat } from './components';
 import { invoicePdf, shareInvoice } from './pdf';
 import { InvoiceBranding } from './InvoiceBranding';
 import { invoiceText } from './invoiceText';
+import { editDemoInvoice } from './invoiceEditing';
 
 type Page =
   | 'dashboard'
@@ -125,6 +128,7 @@ export default function App() {
     [edit, setEdit] = useState<Edit | null>(null),
     [compose, setCompose] = useState<'sale' | 'invoice' | null>(null),
     [copySource, setCopySource] = useState<Invoice | null>(null),
+    [editingInvoice, setEditingInvoice] = useState<Invoice | null>(null),
     [detail, setDetail] = useState<Invoice | null>(null),
     [customerDetail, setCustomerDetail] = useState<Customer | null>(null),
     [movementProduct, setMovementProduct] = useState<Product | null>(null);
@@ -154,6 +158,9 @@ export default function App() {
       if (event === 'SIGNED_IN' || event === 'SIGNED_OUT') {
         setData(emptyData);
         setProfile(null);
+        setCompose(null);
+        setCopySource(null);
+        setEditingInvoice(null);
       }
       if (
         event === 'PASSWORD_RECOVERY' ||
@@ -615,6 +622,7 @@ export default function App() {
                   product_id: p.id,
                   delta: -qty,
                   reason: `Invoice ${invoice.number}`,
+                  invoice_id: invoice.id,
                   created_by: profile.id,
                   created_at: created,
                 });
@@ -639,6 +647,23 @@ export default function App() {
       setCopySource(null);
       go('invoices');
     }, 'Invoice saved. Open it for a receipt, PDF, or payment.');
+  }
+  async function saveInvoiceEdit(payload: Record<string, unknown>) {
+    await act(async () => {
+      if (!editingInvoice || !profile || !can(role, 'invoice'))
+        throw new Error('Invoice editing is not authorized.');
+      if (demo) setData(editDemoInvoice(data, editingInvoice, payload, profile.id));
+      else
+        await rpc('edit_invoice', {
+          p_id: editingInvoice.id,
+          p_version: editingInvoice.revision ?? 1,
+          p_payload: payload,
+        });
+      setDetail(editingInvoice);
+      setCompose(null);
+      setEditingInvoice(null);
+      setCopySource(null);
+    }, 'Invoice updated. Its number and payment history are preserved.');
   }
   async function changeMember(p: Profile, changes: { role?: Role; active?: boolean }) {
     if (demo)
@@ -698,6 +723,7 @@ export default function App() {
           }
           updateDemo((d) => {
             d.invoices.find((x) => x.id === i.id)!.status = i.total === 0 ? 'paid' : 'pending';
+            d.invoices.find((x) => x.id === i.id)!.revision = (i.revision ?? 1) + 1;
             d.sales.push({
               id: uid(),
               invoice_id: i.id,
@@ -718,6 +744,7 @@ export default function App() {
                   product_id: p.id,
                   delta: -qty,
                   reason: `Invoice ${i.number}`,
+                  invoice_id: i.id,
                   created_by: profile!.id,
                   created_at: new Date().toISOString(),
                 });
@@ -870,6 +897,8 @@ export default function App() {
                   setDetail(null);
                   setEdit(null);
                   setCompose(null);
+                  setCopySource(null);
+                  setEditingInvoice(null);
                 })
               }
             >
@@ -1584,7 +1613,8 @@ export default function App() {
         <Composer
           key={copySource?.id || 'new'}
           mode={compose}
-          source={copySource}
+          source={editingInvoice || copySource}
+          editing={!!editingInvoice}
           onCopySource={(id) => {
             setCopySource(data.invoices.find((i) => i.id === id) || null);
             setError('');
@@ -1596,8 +1626,9 @@ export default function App() {
           onClose={() => {
             setCompose(null);
             setCopySource(null);
+            setEditingInvoice(null);
           }}
-          onSave={createDocument}
+          onSave={editingInvoice ? saveInvoiceEdit : createDocument}
         />
       )}
       {edit && (
@@ -1626,6 +1657,13 @@ export default function App() {
           onIssue={() => askIssue(selectedDetail)}
           onCopy={() => {
             setCopySource(selectedDetail);
+            setDetail(null);
+            setError('');
+            setCompose('invoice');
+          }}
+          onEdit={() => {
+            setEditingInvoice(selectedDetail);
+            setCopySource(null);
             setDetail(null);
             setError('');
             setCompose('invoice');
@@ -1928,6 +1966,7 @@ function Auth({
 
 function Composer({
   mode,
+  editing,
   source,
   onCopySource,
   data,
@@ -1938,6 +1977,7 @@ function Composer({
   onSave,
 }: {
   mode: 'sale' | 'invoice';
+  editing: boolean;
   source: Invoice | null;
   onCopySource: (id: string) => void;
   data: Data;
@@ -1978,13 +2018,13 @@ function Composer({
   };
   return (
     <Modal
-      title={mode === 'sale' ? 'New sale' : 'New invoice'}
+      title={editing ? `Edit ${source?.number}` : mode === 'sale' ? 'New sale' : 'New invoice'}
       onClose={() => {
         if (!busy) onClose();
       }}
     >
       <InvoiceBranding settings={cfg} />
-      {mode === 'invoice' && (
+      {mode === 'invoice' && !editing && (
         <Field label="Copy from invoice">
           <select
             value={source?.id || ''}
@@ -2002,7 +2042,7 @@ function Composer({
           </select>
         </Field>
       )}
-      {source && (
+      {source && !editing && (
         <p className="alert" role="status">
           Copied from {source.number}. Review descriptions, prices and dates before saving. This
           creates a new invoice without the original payments. Customer billing details use the
@@ -2012,16 +2052,35 @@ function Composer({
             ' The original customer is inactive or unavailable; select an active customer.'}
         </p>
       )}
+      {editing && source && (
+        <p className="alert">
+          Editing {source.number}. Payments received: {money(paidAmount(source.id, data.payments))}.
+          Saving preserves the invoice number and records the previous details in the audit log.
+          {paidAmount(source.id, data.payments) > 0 &&
+            ' The customer stays fixed and the total cannot be less than these payments.'}
+          {source.status !== 'draft' && ' Stock changes are applied when you save.'}
+        </p>
+      )}
       <form
         onSubmit={(e) => {
           const f = formValues(e);
           setLocalError('');
           try {
             totals(lines, discount, tax);
-            if (method === 'invoice' && !f.customer_id && f.intent !== 'draft')
+            const customerId =
+              editing && source && paidAmount(source.id, data.payments) > 0
+                ? source.customer_id
+                : f.customer_id;
+            if (
+              method === 'invoice' &&
+              !customerId &&
+              f.intent !== 'draft' &&
+              !(editing && source?.status === 'draft')
+            )
               throw new Error('Select a customer for invoice / credit.');
             void onSave({
               ...f,
+              customer_id: customerId,
               lines,
               discount,
               tax_rate: tax,
@@ -2045,14 +2104,20 @@ function Composer({
               name="customer_id"
               defaultValue={
                 source?.customer_id &&
-                data.customers.some((c) => c.id === source.customer_id && c.active)
+                (editing || data.customers.some((c) => c.id === source.customer_id && c.active))
                   ? source.customer_id
                   : ''
               }
-              required={method === 'invoice'}
+              disabled={editing && !!source && paidAmount(source.id, data.payments) > 0}
+              required={method === 'invoice' && !(editing && source?.status === 'draft')}
               onChange={() => setRequestId(uid())}
             >
               <option value="">Walk-in customer</option>
+              {editing &&
+                source?.customer_id &&
+                !data.customers.some((c) => c.id === source.customer_id && c.active) && (
+                  <option value={source.customer_id}>{source.customer_name} (inactive)</option>
+                )}
               {data.customers
                 .filter((c) => c.active)
                 .map((c) => (
@@ -2062,31 +2127,33 @@ function Composer({
                 ))}
             </select>
           </Field>
-          <Field label="Payment method">
-            <select
-              value={method}
-              onChange={(e) => {
-                setMethod(e.target.value);
-                setRequestId(uid());
-              }}
-            >
-              {['cash', 'gcash', 'bank transfer', 'invoice'].map((m) => (
-                <option key={m} value={m}>
-                  {m === 'invoice'
-                    ? 'Invoice / credit'
-                    : m === 'gcash'
-                      ? 'GCash'
-                      : m[0].toUpperCase() + m.slice(1)}
-                </option>
-              ))}
-            </select>
-          </Field>
+          {!editing && (
+            <Field label="Payment method">
+              <select
+                value={method}
+                onChange={(e) => {
+                  setMethod(e.target.value);
+                  setRequestId(uid());
+                }}
+              >
+                {['cash', 'gcash', 'bank transfer', 'invoice'].map((m) => (
+                  <option key={m} value={m}>
+                    {m === 'invoice'
+                      ? 'Invoice / credit'
+                      : m === 'gcash'
+                        ? 'GCash'
+                        : m[0].toUpperCase() + m.slice(1)}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          )}
           <Field label="Issue date">
             <input
               name="issue_date"
               type="date"
               required
-              defaultValue={today()}
+              defaultValue={editing ? source?.issue_date : today()}
               onChange={() => setRequestId(uid())}
             />
           </Field>
@@ -2095,7 +2162,7 @@ function Composer({
               name="due_date"
               type="date"
               required
-              defaultValue={datePlus(cfg.payment_terms_days)}
+              defaultValue={editing ? source?.due_date : datePlus(cfg.payment_terms_days)}
               onChange={() => setRequestId(uid())}
             />
           </Field>
@@ -2273,7 +2340,7 @@ function Composer({
           <button type="button" className="btn" onClick={onClose} disabled={busy}>
             Cancel
           </button>
-          {mode === 'invoice' && (
+          {mode === 'invoice' && !editing && (
             <button
               name="intent"
               value="draft"
@@ -2303,7 +2370,13 @@ function Composer({
               if (input) input.value = 'issue';
             }}
           >
-            {busy ? 'Saving…' : mode === 'sale' ? 'Complete sale' : 'Issue invoice'}
+            {busy
+              ? 'Saving…'
+              : editing
+                ? 'Save changes'
+                : mode === 'sale'
+                  ? 'Complete sale'
+                  : 'Issue invoice'}
           </button>
         </div>
       </form>
@@ -2580,6 +2653,7 @@ function InvoiceDetail({
   onVoid,
   onIssue,
   onCopy,
+  onEdit,
   notify,
   onError,
 }: {
@@ -2593,6 +2667,7 @@ function InvoiceDetail({
   onVoid: () => void;
   onIssue: () => void;
   onCopy: () => void;
+  onEdit: () => void;
   notify: (s: string) => void;
   onError: (s: string) => void;
 }) {
@@ -2688,6 +2763,12 @@ function InvoiceDetail({
         <Empty>No payments recorded.</Empty>
       )}
       <div className="modalfoot wrap">
+        {can(role, 'invoice') && invoiceEditable(i, payments) && (
+          <button className="btn primary" disabled={busy} onClick={onEdit}>
+            <Pencil size={15} />
+            Edit invoice
+          </button>
+        )}
         {can(role, 'invoice') && (
           <button className="btn" disabled={busy} onClick={onCopy}>
             <Copy size={15} />

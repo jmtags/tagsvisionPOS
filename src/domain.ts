@@ -59,6 +59,7 @@ export interface Invoice {
   notes: string;
   terms: string;
   terms_customized?: boolean;
+  revision?: number;
   created_at: string;
 }
 export interface InvoiceItem extends Line {
@@ -101,6 +102,7 @@ export interface Category {
 }
 export interface Movement {
   id: string;
+  invoice_id?: string | null;
   product_id: string;
   delta: number;
   reason: string;
@@ -215,6 +217,9 @@ export const paidAmount = (id: string, payments: Payment[]) =>
   payments
     .filter((p) => p.invoice_id === id)
     .reduce((s, p) => s + Math.round(Number(p.amount) * 100), 0) / 100;
+export const invoiceEditable = (invoice: Invoice, payments: Payment[]) =>
+  !['paid', 'void'].includes(invoice.status) &&
+  (invoice.status === 'draft' || paidAmount(invoice.id, payments) < Number(invoice.total));
 export const balanceDue = (invoice: Pick<Invoice, 'id' | 'total'>, payments: Payment[]) =>
   Math.max(
     0,

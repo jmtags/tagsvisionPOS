@@ -44,6 +44,12 @@ const payload = (extra: Record<string, unknown> = {}) => ({
 });
 const create = (p = payload()) =>
   scalar<string>('select public.create_document($1::jsonb)', [JSON.stringify(p)]);
+const editInvoice = (id: string, extra: Record<string, unknown> = {}, version = 1) =>
+  scalar('select public.edit_invoice($1,$2,$3::jsonb)', [
+    id,
+    version,
+    JSON.stringify(payload(extra)),
+  ]);
 async function seed() {
   await db.exec(`reset role;
  truncate public.shops cascade;
@@ -79,10 +85,144 @@ beforeAll(async () => {
       'utf8',
     ),
   );
+  await db.exec(
+    readFileSync(
+      new URL('../supabase/migrations/202610270004_edit_invoices.sql', import.meta.url),
+      'utf8',
+    ),
+  );
 }, 60000);
 beforeEach(seed);
 afterAll(() => db.close());
 describe('database transactions and ledger', () => {
+  it('edits a draft under its original number with complete before/after history and no stock or payment changes', async () => {
+    const id = await create(payload({ draft: true }));
+    await editInvoice(id, {
+      lines: [{ product_id: product, description: 'Updated job', quantity: 4, unit_price: 60 }],
+      notes: 'Revised artwork',
+      terms: 'Revised terms',
+    });
+    expect(await scalar('select number from public.invoices where id=$1', [id])).toBe('INV-000001');
+    expect(await scalar('select status from public.invoices where id=$1', [id])).toBe('draft');
+    expect(Number(await scalar('select total from public.invoices where id=$1', [id]))).toBe(240);
+    expect(Number(await scalar('select quantity from public.products'))).toBe(10);
+    expect(Number(await scalar('select count(*) from public.sales'))).toBe(0);
+    const history = await scalar<{
+      before: { items: { description: string }[] };
+      after: { items: { description: string }[] };
+    }>("select details from public.audit_logs where action='Invoice edited' and entity_id=$1", [
+      id,
+    ]);
+    expect(history.before.items[0].description).toBe('Historical paper description');
+    expect(history.after.items[0].description).toBe('Updated job');
+    const next = await create(payload({ draft: true }));
+    expect(await scalar('select number from public.invoices where id=$1', [next])).toBe(
+      'INV-000002',
+    );
+  });
+  it('adjusts only the stock difference, refreshes sales, and safely voids after all stock is restored', async () => {
+    const id = await create();
+    await editInvoice(id, {
+      lines: [{ product_id: product, description: 'More paper', quantity: 4, unit_price: 50 }],
+    });
+    expect(Number(await scalar('select quantity from public.products'))).toBe(6);
+    expect(Number(await scalar('select total from public.sales where invoice_id=$1', [id]))).toBe(
+      200,
+    );
+    expect(Number(await scalar('select quantity from public.sale_items'))).toBe(4);
+    await editInvoice(
+      id,
+      { lines: [{ product_id: null, description: 'Design only', quantity: 1, unit_price: 100 }] },
+      2,
+    );
+    expect(Number(await scalar('select quantity from public.products'))).toBe(10);
+    expect(Number(await scalar('select count(*) from public.stock_movements'))).toBe(3);
+    await scalar('select public.void_invoice($1,$2)', [id, 'Cancelled design']);
+    expect(Number(await scalar('select quantity from public.products'))).toBe(10);
+    expect(await scalar('select status from public.invoices where id=$1', [id])).toBe('void');
+  });
+  it('rolls back the entire edit on overselling, invalid dates, malformed items and cross-shop products', async () => {
+    const foreignProduct = crypto.randomUUID();
+    await db.exec('reset role;');
+    await db.query(
+      'insert into public.products(id,shop_id,name,sku,price) values($1,$2,$3,$4,50)',
+      [foreignProduct, otherShop, 'Other shop paper', 'OTHER'],
+    );
+    await asUser(admin);
+    const id = await create();
+    for (const extra of [
+      { lines: [{ product_id: product, description: 'Oversell', quantity: 11, unit_price: 50 }] },
+      { due_date: '2020-01-01' },
+      { lines: [] },
+      {
+        lines: [
+          {
+            product_id: foreignProduct,
+            description: 'Unavailable',
+            quantity: 1,
+            unit_price: 50,
+          },
+        ],
+      },
+    ])
+      await expect(editInvoice(id, extra)).rejects.toThrow();
+    expect(
+      Number(await scalar('select quantity from public.products where id=$1', [product])),
+    ).toBe(8);
+    expect(Number(await scalar('select revision from public.invoices'))).toBe(1);
+    expect(
+      Number(await scalar("select count(*) from public.audit_logs where action='Invoice edited'")),
+    ).toBe(0);
+  });
+  it('preserves partial payments, rejects totals below collections, and locks invoices completed through an edit', async () => {
+    const id = await create();
+    await scalar('select public.record_payment($1,25,$2,$3,$4)', [
+      id,
+      'cash',
+      'Deposit',
+      crypto.randomUUID(),
+    ]);
+    await expect(
+      editInvoice(id, {
+        lines: [{ product_id: product, description: 'Too little', quantity: 1, unit_price: 20 }],
+      }),
+    ).rejects.toThrow('less than payments');
+    await expect(editInvoice(id, { customer_id: null })).rejects.toThrow('Customer cannot change');
+    await editInvoice(id, {
+      lines: [{ product_id: product, description: 'Final amount', quantity: 1, unit_price: 25 }],
+    });
+    expect(await scalar('select status from public.invoices')).toBe('paid');
+    expect(Number(await scalar('select count(*) from public.payments'))).toBe(1);
+    expect(await scalar('select reference from public.payments')).toBe('Deposit');
+    await expect(editInvoice(id, {}, 2)).rejects.toThrow('Completed or void');
+  });
+  it('makes edit retries idempotent and rejects stale revisions and unauthorized editors', async () => {
+    const id = await create();
+    const request = payload({ notes: 'First edit' });
+    const args = [id, 1, JSON.stringify(request)];
+    await scalar('select public.edit_invoice($1,$2,$3::jsonb)', args);
+    await scalar('select public.edit_invoice($1,$2,$3::jsonb)', args);
+    expect(Number(await scalar('select revision from public.invoices'))).toBe(2);
+    await expect(editInvoice(id)).rejects.toThrow('has changed');
+    for (const actor of [staff, outsider]) {
+      await asUser(actor);
+      await expect(editInvoice(id, {}, 2)).rejects.toThrow('Permission denied');
+    }
+    await asUser(cashier);
+    await editInvoice(id, { notes: 'Cashier edit' }, 2);
+    await asUser(accountant);
+    await editInvoice(id, { notes: 'Accountant edit' }, 3);
+  });
+  it('rejects edits after a payment completes the invoice or the invoice is voided', async () => {
+    const paid = await create(payload({ method: 'cash' }));
+    await expect(editInvoice(paid)).rejects.toThrow('Completed or void');
+    const voided = await create();
+    await scalar('select public.void_invoice($1,$2)', [voided, 'Cancelled']);
+    await expect(editInvoice(voided)).rejects.toThrow('Completed or void');
+    const draft = await create(payload({ draft: true }));
+    await scalar('select public.issue_invoice($1)', [draft]);
+    await expect(editInvoice(draft)).rejects.toThrow('has changed');
+  });
   it('creates a copied draft with edited terms and independent numbering, payments and stock', async () => {
     const original = await create(
       payload({ notes: 'Original job', terms: 'Original agreed terms' }),

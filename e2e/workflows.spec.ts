@@ -14,6 +14,100 @@ async function navigate(page: import('@playwright/test').Page, name: string) {
   await page.getByRole('navigation').getByRole('button', { name, exact: true }).click();
 }
 
+test('edits a partially paid invoice, preserves collections and locks it when fully paid', async ({
+  page,
+}) => {
+  test.setTimeout(90000);
+  await navigate(page, 'Invoices');
+  await page.getByRole('button', { name: 'INV-000001', exact: true }).click();
+  await page.getByRole('button', { name: 'Edit invoice', exact: true }).click();
+  let dialog = page.getByRole('dialog');
+  await expect(dialog.getByRole('heading', { name: 'Edit INV-000001', exact: true })).toBeVisible();
+  await expect(dialog.getByRole('combobox', { name: 'Customer', exact: true })).toBeDisabled();
+  await expect(dialog.getByLabel('Payment method')).toHaveCount(0);
+  await dialog.getByLabel('Item 1 description').fill('Revised full-color flyers');
+  await dialog.getByLabel('Unit price (PHP)', { exact: true }).fill('1');
+  await dialog.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await expect(dialog.getByRole('alert')).toContainText('less than payments');
+  await dialog.getByLabel('Unit price (PHP)', { exact: true }).fill('20');
+  await dialog.getByLabel('Notes', { exact: true }).fill('Approved revised artwork');
+  await dialog.getByLabel('Invoice terms', { exact: true }).fill('Balance due before collection.');
+  await dialog.getByRole('button', { name: 'Save changes', exact: true }).click();
+  dialog = page.getByRole('dialog');
+  await expect(dialog.getByRole('heading', { name: 'INV-000001', exact: true })).toBeVisible();
+  await expect(dialog).toContainText('Revised full-color flyers');
+  await expect(dialog).toContainText('Demo deposit');
+  await expect(dialog).toContainText('3,000.00');
+  const download = page.waitForEvent('download');
+  await dialog.getByRole('button', { name: 'PDF', exact: true }).click();
+  const file = await download;
+  await file.saveAs(`artifacts/${test.info().project.name}-edited-invoice.pdf`);
+  const output = await readFile((await file.path())!, 'latin1');
+  for (const text of [
+    'Revised full-color flyers',
+    'Approved revised artwork',
+    'Balance due before collection.',
+    'PHP 4,000.00',
+    'PHP 1,000.00',
+    'PHP 3,000.00',
+  ])
+    expect(output).toContain(text);
+  await dialog.getByRole('button', { name: 'Record payment' }).click();
+  await page.getByLabel('Amount (PHP)').fill('3000');
+  await page.getByLabel('Payment reference').fill('Balance after edit');
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await page.getByRole('button', { name: 'INV-000001', exact: true }).click();
+  dialog = page.getByRole('dialog');
+  await expect(dialog.getByText('paid', { exact: true })).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Edit invoice', exact: true })).toHaveCount(0);
+  await expect(dialog).toContainText('Demo deposit');
+  await expect(dialog).toContainText('Balance after edit');
+});
+
+test('edits drafts without stock changes and adjusts stock differences after issue', async ({
+  page,
+}) => {
+  test.setTimeout(90000);
+  await navigate(page, 'Invoices');
+  await page.getByRole('button', { name: 'New invoice', exact: true }).click();
+  let dialog = page.getByRole('dialog');
+  await dialog.getByRole('combobox', { name: 'Customer', exact: true }).selectOption('c1');
+  await dialog.getByRole('button', { name: /A4 Copy Paper/ }).click();
+  await dialog.getByLabel('Quantity', { exact: true }).fill('2');
+  await dialog.getByRole('button', { name: 'Save draft', exact: true }).click();
+  await page.getByRole('button', { name: 'INV-000002', exact: true }).click();
+  await page.getByRole('button', { name: 'Edit invoice', exact: true }).click();
+  dialog = page.getByRole('dialog');
+  await dialog.getByLabel('Quantity', { exact: true }).fill('3');
+  await dialog.getByLabel('Item 1 description').fill('Updated paper order');
+  await dialog.getByRole('button', { name: 'Save changes', exact: true }).click();
+  dialog = page.getByRole('dialog');
+  await expect(dialog.getByText('draft', { exact: true })).toBeVisible();
+  await expect(dialog).toContainText('Updated paper order');
+  await dialog.getByRole('button', { name: 'Close dialog' }).click();
+  await navigate(page, 'Inventory');
+  await expect(
+    page.getByRole('row').filter({ hasText: 'PPR-A4-80' }).getByRole('button', { name: '42 ream' }),
+  ).toBeVisible();
+  await navigate(page, 'Invoices');
+  await page.getByRole('button', { name: 'INV-000002', exact: true }).click();
+  await page.getByRole('button', { name: 'Issue invoice', exact: true }).click();
+  await page.getByRole('button', { name: 'Confirm', exact: true }).click();
+  await page.getByRole('button', { name: 'INV-000002', exact: true }).click();
+  await page.getByRole('button', { name: 'Edit invoice', exact: true }).click();
+  dialog = page.getByRole('dialog');
+  await dialog.getByLabel('Quantity', { exact: true }).fill('999');
+  await dialog.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await expect(dialog.getByRole('alert')).toContainText('Insufficient stock');
+  await dialog.getByLabel('Quantity', { exact: true }).fill('1');
+  await dialog.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await page.getByRole('button', { name: 'Close dialog' }).click();
+  await navigate(page, 'Inventory');
+  const row = page.getByRole('row').filter({ hasText: 'PPR-A4-80' });
+  await row.getByRole('button', { name: '41 ream' }).click();
+  await expect(page.getByRole('dialog')).toContainText('Edit INV-000002 revision');
+});
+
 test('copies an existing invoice into an editable draft without changing its history', async ({
   page,
 }) => {
