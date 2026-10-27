@@ -1,15 +1,15 @@
 # Verification
 
-Verified locally on October 22, 2026 with Node 22.18 and npm 10.9 on Windows:
+Verified locally on October 27, 2026 with Node 22.18 and npm 10.9 on Windows:
 
 - TypeScript: `npm run typecheck` passed.
 - ESLint: `npm run lint` passed.
-- Unit + PostgreSQL + staff endpoint: `npm test` passed, **51 tests** across three suites. The integration suite executes both production SQL migrations and RPCs using PGlite, with Supabase Auth roles and `auth.uid()` emulated. It covers numbering/retries, stock, partial payments, financial snapshots/audits, cross-shop RLS, deactivation, server-only staff provisioning, password audit permissions, and endpoint role/same-shop/password validation. Endpoint tests inject Auth service adapters; they do not contact live Auth.
-- Browser: `npm run test:e2e` passed, **10 tests**, desktop Chrome and Chrome with iPhone viewport/touch emulation. Covers navigation, customer creation/search, document overflow, checkout/stock deduction, PDF download, partial payment history, administrator account/password forms, and screenshots. No page JavaScript errors were observed.
+- Unit + PostgreSQL + staff endpoint + PDF: `npm test` passed, **55 tests** across four suites. The integration suite executes both production SQL migrations and RPCs using PGlite, with Supabase Auth roles and `auth.uid()` emulated. It covers numbering/retries, stock, partial payments, financial snapshots/audits, cross-shop RLS, deactivation, server-only staff provisioning, password audit permissions, and endpoint role/same-shop/password validation. PDF tests verify current shop details on reprints, removed branding, legacy snapshots, and preservation of invoice tax and terms. Endpoint tests inject Auth service adapters; they do not contact live Auth.
+- Browser: `npm run test:e2e` passed, **12 tests**, desktop Chrome and Chrome with iPhone viewport/touch emulation. Covers navigation, customer creation/search, document overflow, checkout/stock deduction, PDF download, partial payment history, administrator account/password forms, saved business details/logo in invoice creation and detail, logo removal, new/old invoice exports, and screenshots. No page JavaScript errors were observed.
 - Production bundle: `npm run build` passed. React and PDF libraries have separate chunks. Also tested a build with non-secret placeholder Supabase URL/key values to retain and verify the actual client integration in the compiled bundle; these do not connect to a real project.
 - Compiled-bundle smoke test: `npm run test:built` passed against the current Vite Preview build, including login display, demo navigation, invoice detail, and PDF download with no page JavaScript errors. Earlier configured-placeholder and unconfigured builds also passed; frontend credentials have since been configured by the user, and the build uses the current local environment. Rebuild with the intended deployment environment before publishing.
 - Production dependency audit: `npm audit --omit=dev --json` reports **zero known vulnerabilities**. Upgraded jsPDF to 4.2.1 after the initial audit identified vulnerable versions.
-- Visually inspected the generated desktop/mobile dashboards, inventory screens, and the downloaded one-page invoice PDF. The PDF includes the shop, walk-in billing, line amount, tax/discount, totals, paid status, zero balance, terms, and cash payment history. Artifacts are in `artifacts/` (ignored from version control).
+- Visually inspected desktop/mobile screens and downloaded invoice PDFs, including a reprinted older invoice with newly saved business branding. The branded PDF contains an embedded logo image, business name, address, email and phone, plus the original customer details, line amounts, tax, totals, partial payment, balance, and terms. Artifacts are in `artifacts/` (ignored from version control).
 
 ## Remaining deployment checks
 

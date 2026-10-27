@@ -104,6 +104,7 @@ export function demoData(): Data {
         id: 'i1',
         shop_id: 'demo',
         number: 'INV-000001',
+        business_details: structuredClone(demoSettings),
         customer_id: 'c1',
         customer_name: 'Bright Future Studio (fictional)',
         customer_email: 'studio@example.test',

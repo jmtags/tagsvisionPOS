@@ -46,6 +46,7 @@ import type {
 import { demoData, demoSettings } from './demo';
 import { Badge, Empty, Field, Modal, Stat } from './components';
 import { invoicePdf, shareInvoice } from './pdf';
+import { InvoiceBranding } from './InvoiceBranding';
 
 type Page =
   | 'dashboard'
@@ -215,6 +216,7 @@ export default function App() {
     return () => clearTimeout(t);
   }, [notice]);
   const cfg = data.shop_settings[0] || demoSettings;
+  const [logoProcessing, setLogoProcessing] = useState(false);
   const role = profile?.role || 'Staff';
   const go = (p: Page) => {
     setPage(p);
@@ -572,6 +574,7 @@ export default function App() {
           customer_name: c?.name || 'Walk-in customer',
           customer_email: c?.email || '',
           billing_address: c?.billing_address || '',
+          business_details: structuredClone(cfg),
           issue_date: String(payload.issue_date),
           due_date: String(payload.due_date),
           discount: Number(payload.discount),
@@ -724,6 +727,10 @@ export default function App() {
   }
   async function saveSettings(e: FormEvent<HTMLFormElement>) {
     const f = formValues(e);
+    if (logoProcessing) {
+      setError('Wait for the logo to finish processing, then save settings.');
+      return;
+    }
     await act(async () => {
       const values = {
         ...f,
@@ -743,6 +750,7 @@ export default function App() {
           .select();
         if (r.error) throw r.error;
         if (!r.data?.length) throw new Error('Settings were not saved.');
+        setData((current) => ({ ...current, shop_settings: r.data as Settings[] }));
       }
     });
   }
@@ -1496,7 +1504,11 @@ export default function App() {
                     <Field label="Business address">
                       <textarea name="address" defaultValue={cfg.address} />
                     </Field>
-                    <LogoField value={cfg.logo_url} onError={setError} />
+                    <LogoField
+                      value={cfg.logo_url}
+                      onError={setError}
+                      onProcessingChange={setLogoProcessing}
+                    />
                   </div>
                   <div className="panel">
                     <h2>Invoice preferences</h2>
@@ -1553,8 +1565,8 @@ export default function App() {
                   <Field label="Invoice terms / PDF footer">
                     <textarea name="terms" defaultValue={cfg.terms} rows={3} />
                   </Field>
-                  <button className="btn primary" disabled={busy}>
-                    Save settings
+                  <button className="btn primary" disabled={busy || logoProcessing}>
+                    {logoProcessing ? 'Processing logo…' : 'Save settings'}
                   </button>
                 </div>
               </form>
@@ -1689,8 +1701,25 @@ export default function App() {
   );
 }
 
-function LogoField({ value, onError }: { value: string; onError: (s: string) => void }) {
+function LogoField({
+  value,
+  onError,
+  onProcessingChange,
+}: {
+  value: string;
+  onError: (s: string) => void;
+  onProcessingChange: (processing: boolean) => void;
+}) {
   const [logo, setLogo] = useState(value);
+  const [processing, setProcessing] = useState(false);
+  const generation = useRef(0);
+  useEffect(
+    () => () => {
+      generation.current++;
+      onProcessingChange(false);
+    },
+    [onProcessingChange],
+  );
   return (
     <Field label="Invoice logo (PNG / JPEG)">
       <input name="logo_url" type="hidden" value={logo} />
@@ -1703,6 +1732,7 @@ function LogoField({ value, onError }: { value: string; onError: (s: string) => 
       )}
       <input
         type="file"
+        disabled={processing}
         accept="image/png,image/jpeg"
         onChange={(e) => {
           const file = e.target.files?.[0];
@@ -1711,30 +1741,48 @@ function LogoField({ value, onError }: { value: string; onError: (s: string) => 
             onError('Choose a PNG or JPEG logo smaller than 500 KB.');
             return;
           }
+          const currentGeneration = ++generation.current;
+          setProcessing(true);
+          onProcessingChange(true);
+          const finish = (error?: string) => {
+            if (currentGeneration !== generation.current) return;
+            setProcessing(false);
+            onProcessingChange(false);
+            if (error) onError(error);
+          };
           const reader = new FileReader();
           reader.onload = () => {
+            if (currentGeneration !== generation.current) return;
             const image = new Image();
             image.onload = () => {
-              const scale = Math.min(1, 256 / Math.max(image.width, image.height));
-              const canvas = document.createElement('canvas');
-              canvas.width = Math.max(1, Math.round(image.width * scale));
-              canvas.height = Math.max(1, Math.round(image.height * scale));
-              canvas.getContext('2d')!.drawImage(image, 0, 0, canvas.width, canvas.height);
-              setLogo(canvas.toDataURL(file.type));
+              if (currentGeneration !== generation.current) return;
+              try {
+                const scale = Math.min(1, 256 / Math.max(image.width, image.height));
+                const canvas = document.createElement('canvas');
+                canvas.width = Math.max(1, Math.round(image.width * scale));
+                canvas.height = Math.max(1, Math.round(image.height * scale));
+                canvas.getContext('2d')!.drawImage(image, 0, 0, canvas.width, canvas.height);
+                setLogo(canvas.toDataURL(file.type));
+                finish();
+              } catch {
+                finish('Could not prepare the logo. Choose a valid PNG or JPEG image.');
+              }
             };
-            image.onerror = () => onError('This file could not be decoded as an image.');
+            image.onerror = () => finish('This file could not be decoded as an image.');
             image.src = String(reader.result);
           };
-          reader.onerror = () => onError('Could not read the logo.');
+          reader.onerror = () => finish('Could not read the logo.');
+          reader.onabort = () => finish('Logo upload was cancelled.');
           reader.readAsDataURL(file);
         }}
       />
       {logo && (
-        <button type="button" className="link" onClick={() => setLogo('')}>
+        <button type="button" className="link" disabled={processing} onClick={() => setLogo('')}>
           Remove logo
         </button>
       )}
       <small className="muted">Up to 500 KB. The logo is embedded in invoice PDFs.</small>
+      {processing && <small role="status">Preparing logo…</small>}
     </Field>
   );
 }
@@ -1902,6 +1950,7 @@ function Composer({
         if (!busy) onClose();
       }}
     >
+      <InvoiceBranding settings={cfg} />
       <form
         onSubmit={(e) => {
           const f = formValues(e);
@@ -2115,6 +2164,12 @@ function Composer({
         <Field label="Notes">
           <textarea name="notes" rows={2} onChange={() => setRequestId(uid())} />
         </Field>
+        {cfg.terms && (
+          <div className="invoice-terms">
+            <h3>Invoice terms</h3>
+            <p>{cfg.terms}</p>
+          </div>
+        )}
         <div className="checkout">
           <span>
             Subtotal <b>{money(calc?.subtotal || 0)}</b>
@@ -2464,6 +2519,7 @@ function InvoiceDetail({
   const pdf = () => invoicePdf(i, items, payments, cfg);
   return (
     <Modal title={i.number} onClose={onClose}>
+      <InvoiceBranding settings={cfg} />
       <div className="invoice-heading">
         <div>
           <h3>{i.customer_name}</h3>

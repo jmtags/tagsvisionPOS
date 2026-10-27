@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { readFile } from 'node:fs/promises';
 let errors: string[] = [];
 test.beforeEach(async ({ page }) => {
   errors = [];
@@ -87,4 +88,95 @@ test('administrator account forms validate password confirmation and mask passwo
   dialog = page.getByRole('dialog');
   await expect(dialog.getByLabel('New password')).toHaveAttribute('type', 'password');
   await expect(dialog.getByLabel('Confirm password')).toHaveValue('');
+});
+
+test('saved logo and business details appear when creating, viewing and exporting invoices', async ({
+  page,
+}) => {
+  test.setTimeout(90000);
+  await navigate(page, 'Settings');
+  const business = 'TagsVision Print Studio';
+  const email = 'accounts@tagsvision.example';
+  const phone = '0917 123 4567';
+  const address = '123 Print Street, Quezon City';
+  const terms = 'Please pay within 15 days. Thank you.';
+  await page.getByLabel('Business name').fill(business);
+  await page.getByLabel('Email', { exact: true }).fill(email);
+  await page.getByLabel('Phone', { exact: true }).fill(phone);
+  await page.getByLabel('Business address').fill(address);
+  await page.getByLabel('Invoice terms / PDF footer').fill(terms);
+  await page.getByLabel('PDF accent color').fill('#224488');
+  const logo = await page.evaluate(() => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 160;
+    canvas.height = 80;
+    const context = canvas.getContext('2d')!;
+    context.fillStyle = '#224488';
+    context.fillRect(0, 0, 160, 80);
+    context.fillStyle = '#ffffff';
+    context.font = 'bold 32px sans-serif';
+    context.fillText('TV', 50, 52);
+    return canvas.toDataURL('image/png').split(',')[1];
+  });
+  await page
+    .locator('input[type=file]')
+    .setInputFiles({
+      name: 'test-logo.png',
+      mimeType: 'image/png',
+      buffer: Buffer.from(logo, 'base64'),
+    });
+  await expect(page.getByRole('img', { name: 'Shop logo preview' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Save settings', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: 'Save settings', exact: true }).click();
+  await expect(page.getByRole('status')).toContainText('Changes saved');
+  await navigate(page, 'Invoices');
+  await page.getByRole('button', { name: 'INV-000001', exact: true }).click();
+  let dialog = page.getByRole('dialog');
+  const header = dialog.getByRole('region', { name: 'Invoice business details' });
+  for (const text of [business, email, phone, address]) await expect(header).toContainText(text);
+  await expect(header.getByRole('img', { name: `${business} logo` })).toBeVisible();
+  await dialog.screenshot({ path: `artifacts/${test.info().project.name}-branded-invoice.png` });
+  let download = page.waitForEvent('download');
+  await dialog.getByRole('button', { name: 'PDF', exact: true }).click();
+  let file = await download;
+  await file.saveAs(`artifacts/${test.info().project.name}-branded-existing-invoice.pdf`);
+  let output = await readFile((await file.path())!, 'latin1');
+  for (const text of [business, email, phone, address, 'PHP 3,200.00'])
+    expect(output).toContain(text);
+  expect(output).toContain('/Subtype /Image');
+  await dialog.getByRole('button', { name: 'Close dialog' }).click();
+  await page.getByRole('button', { name: 'New invoice', exact: true }).click();
+  dialog = page.getByRole('dialog');
+  await expect(dialog.getByRole('region', { name: 'Invoice business details' })).toContainText(
+    business,
+  );
+  await expect(dialog.getByRole('img', { name: `${business} logo` })).toBeVisible();
+  await expect(dialog.getByText(terms, { exact: true })).toBeVisible();
+  await dialog.getByRole('combobox', { name: 'Customer', exact: true }).selectOption('c1');
+  await dialog.getByRole('button', { name: /A4 Copy Paper/ }).click();
+  await dialog.getByRole('button', { name: 'Issue invoice', exact: true }).click();
+  await page.getByRole('button', { name: 'INV-000002', exact: true }).click();
+  dialog = page.getByRole('dialog');
+  await expect(dialog.getByText(terms, { exact: true })).toBeVisible();
+  download = page.waitForEvent('download');
+  await dialog.getByRole('button', { name: 'PDF', exact: true }).click();
+  file = await download;
+  output = await readFile((await file.path())!, 'latin1');
+  expect(output).toContain(business);
+  expect(output).toContain(terms);
+  expect(output).toContain('/Subtype /Image');
+  await dialog.getByRole('button', { name: 'Close dialog' }).click();
+  await navigate(page, 'Settings');
+  await page.getByRole('button', { name: 'Remove logo', exact: true }).click();
+  await page.getByRole('button', { name: 'Save settings', exact: true }).click();
+  await navigate(page, 'Invoices');
+  await page.getByRole('button', { name: 'INV-000002', exact: true }).click();
+  dialog = page.getByRole('dialog');
+  await expect(
+    dialog.getByRole('region', { name: 'Invoice business details' }).getByRole('img'),
+  ).toHaveCount(0);
+  download = page.waitForEvent('download');
+  await dialog.getByRole('button', { name: 'PDF', exact: true }).click();
+  file = await download;
+  expect(await readFile((await file.path())!, 'latin1')).not.toContain('/Subtype /Image');
 });

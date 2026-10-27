@@ -3,30 +3,34 @@ import autoTable from 'jspdf-autotable';
 import { invoiceStatus, lineAmount, paidAmount } from './domain';
 import type { Invoice, InvoiceItem, Payment, Settings } from './domain';
 export function invoicePdf(
-  invoice: Invoice & { business_details?: Settings },
+  invoice: Invoice,
   items: InvoiceItem[],
   payments: Payment[],
   settings: Settings,
 ) {
   const doc = new jsPDF();
-  const cfg = invoice.business_details || settings;
+  // Branding follows the current shop settings, including reprints of older invoices.
+  // Customer details, line items, totals, tax and payment terms remain invoice snapshots.
+  const cfg = settings;
   const php = (n: number) =>
     `PHP ${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   const paid = paidAmount(invoice.id, payments);
   let brandX = 14;
+  let logoBottom = 12;
   if (cfg.logo_url?.startsWith('data:image/')) {
     const image = doc.getImageProperties(cfg.logo_url);
     const scale = Math.min(18 / image.width, 18 / image.height);
     doc.addImage(
       cfg.logo_url,
       14,
-      12,
+      14,
       image.width * scale,
       image.height * scale,
       undefined,
       'FAST',
     );
     brandX = 36;
+    logoBottom = 14 + image.height * scale;
   }
   doc.setFontSize(21);
   doc.setTextColor(cfg.brand_color);
@@ -35,9 +39,12 @@ export function invoicePdf(
   doc.setTextColor('#182238');
   doc.setFontSize(9);
   const businessY = 30 + (nameLines.length - 1) * 8;
-  const business = doc.splitTextToSize([cfg.address, `${cfg.email}  ${cfg.phone}`].join('\n'), 180);
-  doc.text(business, 14, businessY);
-  let y = businessY + 8 + business.length * 4;
+  const business = doc.splitTextToSize(
+    [cfg.address, [cfg.email, cfg.phone].filter(Boolean).join('  ')].filter(Boolean).join('\n'),
+    196 - brandX,
+  );
+  doc.text(business, brandX, businessY);
+  let y = Math.max(businessY + 8 + business.length * 4, logoBottom + 8);
   doc.setFontSize(16);
   doc.text(`INVOICE ${invoice.number}`, 14, y);
   y += 7;

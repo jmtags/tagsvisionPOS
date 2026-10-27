@@ -824,6 +824,48 @@ dialog::backdrop {
   justify-content: space-between;
   gap: 15px;
 }
+.invoice-branding {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  border-bottom: 2px solid;
+  padding: 0 0 18px;
+  margin-bottom: 22px;
+  overflow-wrap: anywhere;
+}
+.invoice-branding img {
+  width: 72px;
+  height: 72px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+.invoice-branding h3 {
+  font-size: 20px;
+  margin: 0 0 7px;
+}
+.invoice-branding p {
+  color: #64748b;
+  font-size: 12px;
+  margin: 3px 0;
+}
+.business-address,
+.invoice-terms p {
+  white-space: pre-line;
+}
+.invoice-terms {
+  background: #f8faff;
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin: 16px 0;
+}
+.invoice-terms h3 {
+  margin: 0 0 6px;
+}
+.invoice-terms p {
+  margin: 0;
+  color: #64748b;
+  font-size: 12px;
+}
 .invoice-heading h3 {
   margin-top: 0;
 }
