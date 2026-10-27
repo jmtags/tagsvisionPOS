@@ -14,6 +14,39 @@ async function navigate(page: import('@playwright/test').Page, name: string) {
   await page.getByRole('navigation').getByRole('button', { name, exact: true }).click();
 }
 
+test('invoice dialogs preserve entered data on outside clicks, hover, padding clicks and Escape', async ({
+  page,
+}) => {
+  await navigate(page, 'Invoices');
+  await page.getByRole('button', { name: 'New invoice', exact: true }).click();
+  const dialog = page.getByRole('dialog');
+  await dialog.getByRole('combobox', { name: 'Customer', exact: true }).selectOption('c1');
+  await dialog.getByRole('button', { name: /A4 Copy Paper/ }).click();
+  await dialog.getByLabel('Notes', { exact: true }).fill('Keep this unfinished invoice.');
+  await page.mouse.move(1, 1);
+  await page.mouse.click(1, 1);
+  await expect(dialog).toBeVisible();
+  const box = await dialog.boundingBox();
+  if (!box) throw new Error('Invoice dialog is missing');
+  await page.mouse.click(box.x + 3, box.y + 3);
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByLabel('Notes', { exact: true })).toHaveValue(
+    'Keep this unfinished invoice.',
+  );
+  await dialog.getByRole('button', { name: 'Save draft', exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await page.getByRole('button', { name: 'INV-000002', exact: true }).click();
+  await expect(dialog.getByRole('region', { name: 'Invoice notes' })).toContainText(
+    'Keep this unfinished invoice.',
+  );
+  await dialog.getByRole('button', { name: 'Close dialog' }).click();
+  await expect(dialog).toHaveCount(0);
+  await page.getByRole('button', { name: 'New invoice', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+});
+
 test('edits a partially paid invoice, preserves collections and locks it when fully paid', async ({
   page,
 }) => {

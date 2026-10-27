@@ -33,10 +33,6 @@ export function Modal({
       ref={ref}
       onCancel={(event) => {
         event.preventDefault();
-        onClose();
-      }}
-      onClick={(e) => {
-        if (e.target === ref.current) onClose();
       }}
     >
       <div className="modalhead">
