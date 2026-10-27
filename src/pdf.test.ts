@@ -4,6 +4,14 @@ import { invoicePdf } from './pdf';
 import { invoiceText } from './invoiceText';
 
 describe('invoice business details in exported PDFs', () => {
+  it('preserves terms intentionally cleared on a new or copied invoice', () => {
+    const data = demoData();
+    const invoice = { ...data.invoices[0], terms: '', terms_customized: true };
+    expect(invoiceText(invoice, demoSettings).terms).toBe('');
+    expect(invoicePdf(invoice, data.invoice_items, [], demoSettings).output()).not.toContain(
+      demoSettings.terms,
+    );
+  });
   it('uses configured terms for older blank invoices without changing the saved record', () => {
     const data = demoData();
     const invoice = {

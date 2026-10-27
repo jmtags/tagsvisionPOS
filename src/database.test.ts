@@ -73,10 +73,63 @@ beforeAll(async () => {
       'utf8',
     ),
   );
+  await db.exec(
+    readFileSync(
+      new URL('../supabase/migrations/202610270003_invoice_terms.sql', import.meta.url),
+      'utf8',
+    ),
+  );
 }, 60000);
 beforeEach(seed);
 afterAll(() => db.close());
 describe('database transactions and ledger', () => {
+  it('creates a copied draft with edited terms and independent numbering, payments and stock', async () => {
+    const original = await create(
+      payload({ notes: 'Original job', terms: 'Original agreed terms' }),
+    );
+    await scalar('select public.record_payment($1,25,$2,$3,$4)', [
+      original,
+      'cash',
+      'Deposit',
+      crypto.randomUUID(),
+    ]);
+    const copiedPayload = payload({
+      draft: true,
+      notes: 'Repeat job',
+      terms: 'Repeat job terms',
+      issue_date: '2026-11-03',
+      due_date: '2026-11-18',
+    });
+    const copy = await create(copiedPayload);
+    expect(copy).not.toBe(original);
+    expect(await create(copiedPayload)).toBe(copy);
+    expect(await scalar('select number from public.invoices where id=$1', [copy])).toBe(
+      'INV-000002',
+    );
+    expect(await scalar('select terms from public.invoices where id=$1', [copy])).toBe(
+      'Repeat job terms',
+    );
+    expect(await scalar('select terms from public.invoices where id=$1', [original])).toBe(
+      'Original agreed terms',
+    );
+    expect(
+      Number(await scalar('select count(*) from public.payments where invoice_id=$1', [copy])),
+    ).toBe(0);
+    expect(Number(await scalar('select quantity from public.products'))).toBe(8);
+    await scalar('select public.issue_invoice($1)', [copy]);
+    expect(Number(await scalar('select quantity from public.products'))).toBe(6);
+  });
+  it('allows explicitly blank invoice terms without changing shop defaults', async () => {
+    await db.query('update public.shop_settings set terms=$1 where shop_id=$2', [
+      'Shop default',
+      shop,
+    ]);
+    const id = await create(payload({ terms: '' }));
+    expect(await scalar('select terms from public.invoices where id=$1', [id])).toBe('');
+    expect(await scalar('select terms from public.shop_settings where shop_id=$1', [shop])).toBe(
+      'Shop default',
+    );
+  });
   it('persists multiline notes and snapshots configured terms when an invoice is created', async () => {
     const notes = 'Collect at reception.\nAsk for Jamie.';
     const terms = 'Pay within 15 days.\nKeep proof of payment.';

@@ -19,6 +19,7 @@ import {
   ChevronRight,
   X,
   ShieldCheck,
+  Copy,
 } from 'lucide-react';
 import { supabase } from './client';
 import {
@@ -123,6 +124,7 @@ export default function App() {
     [mobile, setMobile] = useState(false),
     [edit, setEdit] = useState<Edit | null>(null),
     [compose, setCompose] = useState<'sale' | 'invoice' | null>(null),
+    [copySource, setCopySource] = useState<Invoice | null>(null),
     [detail, setDetail] = useState<Invoice | null>(null),
     [customerDetail, setCustomerDetail] = useState<Customer | null>(null),
     [movementProduct, setMovementProduct] = useState<Product | null>(null);
@@ -585,7 +587,8 @@ export default function App() {
           total: calc.total,
           status: payload.draft ? 'draft' : payload.method === 'invoice' ? 'pending' : 'paid',
           notes: String(payload.notes ?? ''),
-          terms: cfg.terms,
+          terms: String(payload.terms ?? cfg.terms),
+          terms_customized: payload.terms != null,
           created_at: created,
         };
         updateDemo((d) => {
@@ -633,6 +636,7 @@ export default function App() {
         id = await rpc('create_document', { p_payload: { ...payload, shop_id: profile.shop_id } });
       }
       setCompose(null);
+      setCopySource(null);
       go('invoices');
     }, 'Invoice saved. Open it for a receipt, PDF, or payment.');
   }
@@ -1578,12 +1582,21 @@ export default function App() {
       </main>
       {compose && (
         <Composer
+          key={copySource?.id || 'new'}
           mode={compose}
+          source={copySource}
+          onCopySource={(id) => {
+            setCopySource(data.invoices.find((i) => i.id === id) || null);
+            setError('');
+          }}
           data={data}
           cfg={cfg}
           busy={busy}
           error={error}
-          onClose={() => setCompose(null)}
+          onClose={() => {
+            setCompose(null);
+            setCopySource(null);
+          }}
           onSave={createDocument}
         />
       )}
@@ -1611,6 +1624,12 @@ export default function App() {
           }}
           onVoid={() => askVoid(selectedDetail)}
           onIssue={() => askIssue(selectedDetail)}
+          onCopy={() => {
+            setCopySource(selectedDetail);
+            setDetail(null);
+            setError('');
+            setCompose('invoice');
+          }}
           notify={setNotice}
           onError={setError}
         />
@@ -1909,6 +1928,8 @@ function Auth({
 
 function Composer({
   mode,
+  source,
+  onCopySource,
   data,
   cfg,
   busy,
@@ -1917,6 +1938,8 @@ function Composer({
   onSave,
 }: {
   mode: 'sale' | 'invoice';
+  source: Invoice | null;
+  onCopySource: (id: string) => void;
   data: Data;
   cfg: Settings;
   busy: boolean;
@@ -1924,11 +1947,20 @@ function Composer({
   onClose: () => void;
   onSave: (p: Record<string, unknown>) => Promise<void>;
 }) {
-  const [lines, setLines] = useState<Line[]>([
-      { product_id: null, description: '', quantity: 1, unit_price: 0 },
-    ]),
-    [discount, setDiscount] = useState(0),
-    [tax, setTax] = useState(Number(cfg.tax_rate)),
+  const [lines, setLines] = useState<Line[]>(() =>
+      source
+        ? data.invoice_items
+            .filter((l) => l.invoice_id === source.id)
+            .map((l) => ({
+              product_id: l.product_id,
+              description: l.description,
+              quantity: Number(l.quantity),
+              unit_price: Number(l.unit_price),
+            }))
+        : [{ product_id: null, description: '', quantity: 1, unit_price: 0 }],
+    ),
+    [discount, setDiscount] = useState(Number(source?.discount ?? 0)),
+    [tax, setTax] = useState(Number(source?.tax_rate ?? cfg.tax_rate)),
     [method, setMethod] = useState(mode === 'sale' ? 'cash' : 'invoice'),
     [productSearch, setProductSearch] = useState(''),
     [localError, setLocalError] = useState('');
@@ -1952,6 +1984,34 @@ function Composer({
       }}
     >
       <InvoiceBranding settings={cfg} />
+      {mode === 'invoice' && (
+        <Field label="Copy from invoice">
+          <select
+            value={source?.id || ''}
+            disabled={busy}
+            onChange={(e) => onCopySource(e.target.value)}
+          >
+            <option value="">Start with a blank invoice</option>
+            {[...data.invoices]
+              .sort((a, b) => b.created_at.localeCompare(a.created_at))
+              .map((i) => (
+                <option key={i.id} value={i.id}>
+                  {i.number} — {i.customer_name}
+                </option>
+              ))}
+          </select>
+        </Field>
+      )}
+      {source && (
+        <p className="alert" role="status">
+          Copied from {source.number}. Review descriptions, prices and dates before saving. This
+          creates a new invoice without the original payments. Customer billing details use the
+          current customer record.
+          {source.customer_id &&
+            !data.customers.some((c) => c.id === source.customer_id && c.active) &&
+            ' The original customer is inactive or unavailable; select an active customer.'}
+        </p>
+      )}
       <form
         onSubmit={(e) => {
           const f = formValues(e);
@@ -1983,6 +2043,12 @@ function Composer({
           <Field label="Customer">
             <select
               name="customer_id"
+              defaultValue={
+                source?.customer_id &&
+                data.customers.some((c) => c.id === source.customer_id && c.active)
+                  ? source.customer_id
+                  : ''
+              }
               required={method === 'invoice'}
               onChange={() => setRequestId(uid())}
             >
@@ -2092,6 +2158,11 @@ function Composer({
         {lines.map((l, index) => (
           <div className="lineitem" key={index}>
             <Field label={`Item ${index + 1} description`}>
+              {l.product_id && !data.products.some((p) => p.id === l.product_id && p.active) && (
+                <small className="negative">
+                  Catalog item unavailable. Remove this line and choose an active item.
+                </small>
+              )}
               <input
                 required
                 value={l.description}
@@ -2163,14 +2234,23 @@ function Composer({
           </Field>
         </div>
         <Field label="Notes">
-          <textarea name="notes" rows={2} onChange={() => setRequestId(uid())} />
+          <textarea
+            aria-label="Notes"
+            name="notes"
+            defaultValue={source?.notes || ''}
+            rows={2}
+            onChange={() => setRequestId(uid())}
+          />
         </Field>
-        {cfg.terms && (
-          <div className="invoice-terms">
-            <h3>Invoice terms</h3>
-            <p>{cfg.terms}</p>
-          </div>
-        )}
+        <Field label="Invoice terms">
+          <textarea
+            aria-label="Invoice terms"
+            name="terms"
+            rows={3}
+            defaultValue={source ? invoiceText(source, cfg).terms : cfg.terms}
+            onChange={() => setRequestId(uid())}
+          />
+        </Field>
         <div className="checkout">
           <span>
             Subtotal <b>{money(calc?.subtotal || 0)}</b>
@@ -2499,6 +2579,7 @@ function InvoiceDetail({
   onPay,
   onVoid,
   onIssue,
+  onCopy,
   notify,
   onError,
 }: {
@@ -2511,6 +2592,7 @@ function InvoiceDetail({
   onPay: () => void;
   onVoid: () => void;
   onIssue: () => void;
+  onCopy: () => void;
   notify: (s: string) => void;
   onError: (s: string) => void;
 }) {
@@ -2606,6 +2688,12 @@ function InvoiceDetail({
         <Empty>No payments recorded.</Empty>
       )}
       <div className="modalfoot wrap">
+        {can(role, 'invoice') && (
+          <button className="btn" disabled={busy} onClick={onCopy}>
+            <Copy size={15} />
+            Copy invoice
+          </button>
+        )}
         <button className="btn" onClick={() => pdf().save(`${i.number}.pdf`)}>
           <Download size={15} />
           PDF

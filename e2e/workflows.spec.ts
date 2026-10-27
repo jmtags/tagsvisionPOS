@@ -13,6 +13,110 @@ async function navigate(page: import('@playwright/test').Page, name: string) {
     await page.getByRole('button', { name: 'Open navigation' }).click();
   await page.getByRole('navigation').getByRole('button', { name, exact: true }).click();
 }
+
+test('copies an existing invoice into an editable draft without changing its history', async ({
+  page,
+}) => {
+  test.setTimeout(90000);
+  await navigate(page, 'Invoices');
+  await page.getByRole('button', { name: 'INV-000001', exact: true }).click();
+  await page.getByRole('button', { name: 'Copy invoice', exact: true }).click();
+  let dialog = page.getByRole('dialog');
+  await expect(dialog.getByRole('heading', { name: 'New invoice', exact: true })).toBeVisible();
+  await expect(dialog.getByRole('combobox', { name: 'Customer', exact: true })).toHaveValue('c1');
+  await expect(dialog.getByLabel('Item 1 description')).toHaveValue('A4 color printing');
+  await expect(dialog.getByLabel('Quantity', { exact: true })).toHaveValue('200');
+  await expect(dialog.getByLabel('Unit price (PHP)', { exact: true })).toHaveValue('16');
+  await expect(dialog.getByLabel('Notes', { exact: true })).toHaveValue('200 full-color flyers');
+  await expect(dialog.getByLabel('Payment method')).toHaveValue('invoice');
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date());
+  await expect(dialog.getByLabel('Issue date')).toHaveValue(today);
+  await dialog.getByLabel('Item 1 description').fill('November campaign flyers');
+  await dialog.getByLabel('Issue date').fill('2026-11-05');
+  await dialog.getByLabel('Due date').fill('2026-11-20');
+  await dialog.getByLabel('Discount (PHP)').fill('100');
+  await dialog.getByLabel('Tax (%)', { exact: true }).fill('5');
+  await dialog.getByLabel('Notes', { exact: true }).fill('Repeat order\nNew artwork');
+  await dialog
+    .getByLabel('Invoice terms', { exact: true })
+    .fill('Approval required before printing.');
+  await dialog.getByRole('button', { name: 'Save draft', exact: true }).click();
+  await page.getByLabel('To', { exact: true }).fill('2026-11-30');
+  await page.getByRole('button', { name: 'INV-000002', exact: true }).click();
+  dialog = page.getByRole('dialog');
+  await expect(dialog.getByText('draft', { exact: true })).toBeVisible();
+  await expect(dialog).toContainText('November campaign flyers');
+  await expect(dialog).toContainText('2026-11-05');
+  await expect(dialog).toContainText('2026-11-20');
+  await expect(dialog).toContainText('3,255.00');
+  await expect(dialog).toContainText('Approval required before printing.');
+  await expect(dialog).toContainText('No payments recorded.');
+  const download = page.waitForEvent('download');
+  await dialog.getByRole('button', { name: 'PDF', exact: true }).click();
+  const file = await download;
+  await file.saveAs(`artifacts/${test.info().project.name}-copied-invoice.pdf`);
+  const output = await readFile((await file.path())!, 'latin1');
+  for (const text of [
+    'November campaign flyers',
+    'Approval required before printing.',
+    'Repeat order',
+    'New artwork',
+  ])
+    expect(output).toContain(text);
+  await dialog.getByRole('button', { name: 'Close dialog' }).click();
+  await page.getByRole('button', { name: 'INV-000001', exact: true }).click();
+  dialog = page.getByRole('dialog');
+  await expect(dialog).toContainText('200 full-color flyers');
+  await expect(dialog).toContainText('Demo deposit');
+  await expect(dialog).not.toContainText('November campaign flyers');
+});
+
+test('selects a paid invoice as a template, cancels safely and issues a fresh unpaid invoice with stock checks', async ({
+  page,
+}) => {
+  test.setTimeout(90000);
+  await page.getByRole('button', { name: 'New sale', exact: true }).click();
+  let dialog = page.getByRole('dialog');
+  await dialog.getByRole('combobox', { name: 'Customer', exact: true }).selectOption('c1');
+  await dialog.getByRole('button', { name: /A4 Copy Paper/ }).click();
+  await dialog.getByLabel('Quantity', { exact: true }).fill('2');
+  await dialog.getByRole('button', { name: 'Complete sale' }).click();
+  await page.getByRole('button', { name: 'New invoice', exact: true }).click();
+  dialog = page.getByRole('dialog');
+  await dialog
+    .getByLabel('Copy from invoice')
+    .selectOption({ label: 'INV-000002 — Bright Future Studio (fictional)' });
+  await expect(dialog.getByLabel('Quantity', { exact: true })).toHaveValue('2');
+  await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'INV-000003', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'New invoice', exact: true }).click();
+  dialog = page.getByRole('dialog');
+  await expect(dialog.getByLabel('Item 1 description')).toHaveValue('');
+  await dialog
+    .getByLabel('Copy from invoice')
+    .selectOption({ label: 'INV-000002 — Bright Future Studio (fictional)' });
+  await dialog.getByLabel('Quantity', { exact: true }).fill('999');
+  await dialog.getByRole('button', { name: 'Issue invoice', exact: true }).click();
+  await expect(dialog.getByRole('alert')).toContainText('Insufficient stock');
+  await dialog.getByLabel('Quantity', { exact: true }).fill('2');
+  await dialog.getByLabel('Invoice terms', { exact: true }).fill('');
+  await dialog.getByRole('button', { name: 'Issue invoice', exact: true }).click();
+  await page.getByRole('button', { name: 'INV-000003', exact: true }).click();
+  dialog = page.getByRole('dialog');
+  await expect(dialog.getByText('pending', { exact: true })).toBeVisible();
+  await expect(dialog).toContainText('No payments recorded.');
+  await expect(dialog.getByRole('region', { name: 'Invoice terms', exact: true })).toContainText(
+    'No terms configured.',
+  );
+  await dialog.getByRole('button', { name: 'Close dialog' }).click();
+  await page.getByRole('button', { name: 'INV-000002', exact: true }).click();
+  await expect(page.getByRole('dialog').getByText('paid', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Close dialog' }).click();
+  await navigate(page, 'Inventory');
+  await expect(
+    page.getByRole('row').filter({ hasText: 'PPR-A4-80' }).getByRole('button', { name: '38 ream' }),
+  ).toBeVisible();
+});
 test('navigation, search, customer creation and mobile overflow', async ({ page }) => {
   await expect(page.getByRole('heading', { name: /Good/ })).toBeVisible();
   await navigate(page, 'Customers');
@@ -149,7 +253,7 @@ test('saved logo and business details appear when creating, viewing and exportin
     business,
   );
   await expect(dialog.getByRole('img', { name: `${business} logo` })).toBeVisible();
-  await expect(dialog.getByText(terms, { exact: true })).toBeVisible();
+  await expect(dialog.getByLabel('Invoice terms', { exact: true })).toHaveValue(terms);
   await dialog.getByRole('combobox', { name: 'Customer', exact: true }).selectOption('c1');
   await dialog.getByLabel('Notes', { exact: true }).fill('Collect at reception.\nAsk for Jamie.');
   await dialog.getByRole('button', { name: /A4 Copy Paper/ }).click();

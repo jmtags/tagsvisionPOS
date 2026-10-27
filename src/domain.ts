@@ -58,6 +58,7 @@ export interface Invoice {
   status: Status;
   notes: string;
   terms: string;
+  terms_customized?: boolean;
   created_at: string;
 }
 export interface InvoiceItem extends Line {

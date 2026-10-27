@@ -4,6 +4,8 @@ import type { Invoice, Settings } from './domain';
 export function invoiceText(invoice: Invoice, settings: Settings) {
   return {
     notes: invoice.notes?.trim() || '',
-    terms: invoice.terms?.trim() || settings.terms?.trim() || '',
+    terms: invoice.terms_customized
+      ? invoice.terms?.trim() || ''
+      : invoice.terms?.trim() || settings.terms?.trim() || '',
   };
 }
