@@ -1,8 +1,64 @@
 import { describe, expect, it } from 'vitest';
 import { demoData, demoSettings } from './demo';
 import { invoicePdf } from './pdf';
+import { invoiceText } from './invoiceText';
 
 describe('invoice business details in exported PDFs', () => {
+  it('uses configured terms for older blank invoices without changing the saved record', () => {
+    const data = demoData();
+    const invoice = {
+      ...data.invoices[0],
+      notes: 'Collect at reception.\nAsk for Jamie.',
+      terms: '  ',
+    };
+    const settings = { ...demoSettings, terms: 'Payment within 15 days.\nKeep this invoice.' };
+    expect(invoiceText(invoice, settings)).toEqual({
+      notes: invoice.notes,
+      terms: settings.terms,
+    });
+    const output = invoicePdf(invoice, data.invoice_items, [], settings).output();
+    for (const text of [
+      'Notes',
+      'Collect at reception.',
+      'Ask for Jamie.',
+      'Terms & conditions',
+      'Payment within 15 days.',
+      'Keep this invoice.',
+    ])
+      expect(output).toContain(text);
+    expect(invoice.terms).toBe('  ');
+  });
+  it('does not export undefined values or empty text sections on legacy records', () => {
+    const data = demoData();
+    const invoice = {
+      ...data.invoices[0],
+      notes: undefined,
+      terms: undefined,
+    } as unknown as (typeof data.invoices)[0];
+    const output = invoicePdf(invoice, data.invoice_items, [], {
+      ...demoSettings,
+      terms: '',
+    }).output();
+    expect(output).not.toContain('(undefined)');
+    expect(output).not.toContain('(Notes)');
+    expect(output).not.toContain('(Terms & conditions)');
+  });
+  it('exports all multiline notes and long terms across pages', () => {
+    const data = demoData();
+    const invoice = {
+      ...data.invoices[0],
+      notes: 'First note.\nSecond note.',
+      terms: Array.from(
+        { length: 100 },
+        (_, i) => `Clause ${i + 1}: Please retain proof of payment.`,
+      ).join('\n'),
+    };
+    const doc = invoicePdf(invoice, data.invoice_items, [], demoSettings);
+    expect(doc.getNumberOfPages()).toBeGreaterThan(1);
+    const output = doc.output();
+    for (const text of ['First note.', 'Second note.', 'Clause 1:', 'Clause 100:'])
+      expect(output).toContain(text);
+  });
   it('uses current saved shop identity on reprints even when the invoice snapshot predates it', () => {
     const data = demoData();
     const invoice = data.invoices[0];

@@ -118,13 +118,11 @@ test('saved logo and business details appear when creating, viewing and exportin
     context.fillText('TV', 50, 52);
     return canvas.toDataURL('image/png').split(',')[1];
   });
-  await page
-    .locator('input[type=file]')
-    .setInputFiles({
-      name: 'test-logo.png',
-      mimeType: 'image/png',
-      buffer: Buffer.from(logo, 'base64'),
-    });
+  await page.locator('input[type=file]').setInputFiles({
+    name: 'test-logo.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from(logo, 'base64'),
+  });
   await expect(page.getByRole('img', { name: 'Shop logo preview' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Save settings', exact: true })).toBeEnabled();
   await page.getByRole('button', { name: 'Save settings', exact: true }).click();
@@ -153,17 +151,33 @@ test('saved logo and business details appear when creating, viewing and exportin
   await expect(dialog.getByRole('img', { name: `${business} logo` })).toBeVisible();
   await expect(dialog.getByText(terms, { exact: true })).toBeVisible();
   await dialog.getByRole('combobox', { name: 'Customer', exact: true }).selectOption('c1');
+  await dialog.getByLabel('Notes', { exact: true }).fill('Collect at reception.\nAsk for Jamie.');
   await dialog.getByRole('button', { name: /A4 Copy Paper/ }).click();
   await dialog.getByRole('button', { name: 'Issue invoice', exact: true }).click();
   await page.getByRole('button', { name: 'INV-000002', exact: true }).click();
   dialog = page.getByRole('dialog');
   await expect(dialog.getByText(terms, { exact: true })).toBeVisible();
+  await expect(dialog.getByRole('region', { name: 'Invoice notes' })).toContainText(
+    'Collect at reception.',
+  );
+  await expect(dialog.getByRole('region', { name: 'Invoice notes' })).toContainText(
+    'Ask for Jamie.',
+  );
+  await expect(dialog.getByRole('region', { name: 'Invoice notes' }).locator('p')).toHaveCSS(
+    'white-space',
+    'pre-line',
+  );
+  await expect(dialog.getByRole('region', { name: 'Invoice terms', exact: true })).toContainText(
+    terms,
+  );
   download = page.waitForEvent('download');
   await dialog.getByRole('button', { name: 'PDF', exact: true }).click();
   file = await download;
   output = await readFile((await file.path())!, 'latin1');
   expect(output).toContain(business);
   expect(output).toContain(terms);
+  expect(output).toContain('Collect at reception.');
+  expect(output).toContain('Ask for Jamie.');
   expect(output).toContain('/Subtype /Image');
   await dialog.getByRole('button', { name: 'Close dialog' }).click();
   await navigate(page, 'Settings');

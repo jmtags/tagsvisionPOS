@@ -47,6 +47,7 @@ import { demoData, demoSettings } from './demo';
 import { Badge, Empty, Field, Modal, Stat } from './components';
 import { invoicePdf, shareInvoice } from './pdf';
 import { InvoiceBranding } from './InvoiceBranding';
+import { invoiceText } from './invoiceText';
 
 type Page =
   | 'dashboard'
@@ -583,7 +584,7 @@ export default function App() {
           subtotal: calc.subtotal,
           total: calc.total,
           status: payload.draft ? 'draft' : payload.method === 'invoice' ? 'pending' : 'paid',
-          notes: String(payload.notes),
+          notes: String(payload.notes ?? ''),
           terms: cfg.terms,
           created_at: created,
         };
@@ -2517,6 +2518,7 @@ function InvoiceDetail({
   const payments = data.payments.filter((p) => p.invoice_id === i.id);
   const paid = paidAmount(i.id, payments);
   const pdf = () => invoicePdf(i, items, payments, cfg);
+  const text = invoiceText(i, cfg);
   return (
     <Modal title={i.number} onClose={onClose}>
       <InvoiceBranding settings={cfg} />
@@ -2576,8 +2578,14 @@ function InvoiceDetail({
           Balance<b>{money(Math.max(0, i.total - paid))}</b>
         </strong>
       </div>
-      <p>{i.notes}</p>
-      <p className="muted">{i.terms}</p>
+      <section className="invoice-terms" aria-label="Invoice notes">
+        <h3>Notes</h3>
+        <p>{text.notes || 'No notes added.'}</p>
+      </section>
+      <section className="invoice-terms" aria-label="Invoice terms">
+        <h3>Terms &amp; conditions</h3>
+        <p>{text.terms || 'No terms configured.'}</p>
+      </section>
       <h3>Payment history</h3>
       {payments.length ? (
         <div className="paymentlist">

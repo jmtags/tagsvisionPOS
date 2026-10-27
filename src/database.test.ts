@@ -77,6 +77,18 @@ beforeAll(async () => {
 beforeEach(seed);
 afterAll(() => db.close());
 describe('database transactions and ledger', () => {
+  it('persists multiline notes and snapshots configured terms when an invoice is created', async () => {
+    const notes = 'Collect at reception.\nAsk for Jamie.';
+    const terms = 'Pay within 15 days.\nKeep proof of payment.';
+    await db.query('update public.shop_settings set terms=$1 where shop_id=$2', [terms, shop]);
+    const id = await create(payload({ notes }));
+    await db.query('update public.shop_settings set terms=$1 where shop_id=$2', [
+      'New default',
+      shop,
+    ]);
+    const result = await db.query('select notes, terms from public.invoices where id=$1', [id]);
+    expect(result.rows).toEqual([{ notes, terms }]);
+  });
   it('allocates sequential unique numbers and makes checkout retries idempotent', async () => {
     const p = payload();
     const first = await create(p);

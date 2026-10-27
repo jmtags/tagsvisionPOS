@@ -851,6 +851,7 @@ dialog::backdrop {
 .business-address,
 .invoice-terms p {
   white-space: pre-line;
+  overflow-wrap: anywhere;
 }
 .invoice-terms {
   background: #f8faff;

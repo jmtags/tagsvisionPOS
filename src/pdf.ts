@@ -2,6 +2,7 @@ import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { invoiceStatus, lineAmount, paidAmount } from './domain';
 import type { Invoice, InvoiceItem, Payment, Settings } from './domain';
+import { invoiceText } from './invoiceText';
 export function invoicePdf(
   invoice: Invoice,
   items: InvoiceItem[],
@@ -10,8 +11,9 @@ export function invoicePdf(
 ) {
   const doc = new jsPDF();
   // Branding follows the current shop settings, including reprints of older invoices.
-  // Customer details, line items, totals, tax and payment terms remain invoice snapshots.
+  // Customer details, line items, totals, tax and nonempty saved terms remain snapshots.
   const cfg = settings;
+  const text = invoiceText(invoice, settings);
   const php = (n: number) =>
     `PHP ${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   const paid = paidAmount(invoice.id, payments);
@@ -92,12 +94,19 @@ export function invoicePdf(
     styles: { fontSize: 10 },
     columnStyles: { 1: { halign: 'right' } },
   });
-  autoTable(doc, {
-    head: [['Notes & terms']],
-    body: [[`${invoice.notes}\n${invoice.terms}`]],
-    styles: { fontSize: 9 },
-    headStyles: { fillColor: cfg.brand_color },
-  });
+  for (const [heading, content] of [
+    ['Notes', text.notes],
+    ['Terms & conditions', text.terms],
+  ]) {
+    if (!content) continue;
+    autoTable(doc, {
+      head: [[heading]],
+      body: [[content]],
+      margin: { left: 14, right: 14, bottom: 20 },
+      styles: { fontSize: 9, overflow: 'linebreak', cellPadding: 3 },
+      headStyles: { fillColor: cfg.brand_color },
+    });
+  }
   if (payments.length)
     autoTable(doc, {
       head: [['Payment date', 'Method', 'Reference', 'Amount']],
