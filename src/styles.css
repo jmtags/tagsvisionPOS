@@ -460,6 +460,36 @@ td strong {
   white-space: pre-line;
   overflow-wrap: anywhere;
 }
+tfoot th,
+tfoot td {
+  background: #f0f4fc;
+  border-top: 2px solid #dce4f2;
+  font-size: 11px;
+  color: #182238;
+}
+tfoot th {
+  text-transform: none;
+  letter-spacing: normal;
+}
+.invoice-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 17px;
+}
+.invoice-tools .toolbar {
+  margin-bottom: 0;
+  flex-wrap: wrap;
+  flex: 1 1 360px;
+  min-width: 0;
+}
+.invoice-exports {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
 td small {
   display: block;
   color: #8c96a5;

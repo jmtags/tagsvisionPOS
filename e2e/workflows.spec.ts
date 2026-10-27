@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
+import { strFromU8, unzipSync } from 'fflate';
 let errors: string[] = [];
 test.beforeEach(async ({ page }) => {
   errors = [];
@@ -13,6 +14,62 @@ async function navigate(page: import('@playwright/test').Page, name: string) {
     await page.getByRole('button', { name: 'Open navigation' }).click();
   await page.getByRole('navigation').getByRole('button', { name, exact: true }).click();
 }
+
+test('invoice table totals and PDF/Excel exports follow date, search and status filters', async ({
+  page,
+}) => {
+  test.setTimeout(90000);
+  await navigate(page, 'Invoices');
+  await page.getByRole('button', { name: 'INV-000001', exact: true }).click();
+  await page.getByRole('button', { name: 'Copy invoice', exact: true }).click();
+  await page.getByRole('button', { name: 'Save draft', exact: true }).click();
+  const footer = page.locator('tfoot tr');
+  await expect(footer.getByRole('rowheader')).toHaveText('Totals (2 matching invoices)');
+  await expect(footer.getByRole('cell').nth(0)).toContainText('6,400.00');
+  await expect(footer.getByRole('cell').nth(1)).toContainText('5,400.00');
+  await page.getByLabel('Filter records').selectOption('partially paid');
+  await expect(footer.getByRole('rowheader')).toHaveText('Totals (1 matching invoice)');
+  await expect(footer.getByRole('cell').nth(0)).toContainText('3,200.00');
+  await expect(footer.getByRole('cell').nth(1)).toContainText('2,200.00');
+  let download = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Export PDF', exact: true }).click();
+  let file = await download;
+  expect(file.suggestedFilename()).toMatch(/^invoices-.*\.pdf$/);
+  await file.saveAs(`artifacts/${test.info().project.name}-invoice-list.pdf`);
+  const pdf = await readFile((await file.path())!, 'latin1');
+  for (const text of [
+    'INV-000001',
+    '200 full-color flyers',
+    'PHP 3,200.00',
+    'PHP 2,200.00',
+    'Status: partially paid',
+  ])
+    expect(pdf).toContain(text);
+  expect(pdf).not.toContain('INV-000002');
+  download = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Export Excel', exact: true }).click();
+  file = await download;
+  expect(file.suggestedFilename()).toMatch(/^invoices-.*\.xlsx$/);
+  await file.saveAs(`artifacts/${test.info().project.name}-invoice-list.xlsx`);
+  const zip = unzipSync(new Uint8Array(await readFile((await file.path())!)));
+  const strings = strFromU8(zip['xl/sharedStrings.xml']);
+  const sheet = strFromU8(zip['xl/worksheets/sheet1.xml']);
+  expect(strings).toContain('INV-000001');
+  expect(strings).not.toContain('INV-000002');
+  expect(sheet).toMatch(/<c r="F5"[^>]*><v>3200<\/v><\/c>/);
+  expect(sheet).toMatch(/<c r="G5"[^>]*><v>2200<\/v><\/c>/);
+  await page.getByLabel('Filter records').selectOption('all');
+  await page.getByRole('textbox', { name: 'Search records' }).fill('INV-000002');
+  await expect(footer.getByRole('cell').nth(1)).toContainText('3,200.00');
+  await page.getByLabel('From', { exact: true }).fill('2099-01-01');
+  await expect(footer.getByRole('rowheader')).toHaveText('Totals (0 matching invoices)');
+  await expect(footer.getByRole('cell').nth(0)).toContainText('0.00');
+  await expect(page.getByRole('button', { name: 'Export PDF', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Export Excel', exact: true })).toBeDisabled();
+  await expect
+    .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth))
+    .toBe(true);
+});
 
 test('invoice dialogs preserve entered data on outside clicks, hover, padding clicks and Escape', async ({
   page,

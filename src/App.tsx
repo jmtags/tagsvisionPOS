@@ -52,6 +52,8 @@ import { invoicePdf, shareInvoice } from './pdf';
 import { InvoiceBranding } from './InvoiceBranding';
 import { invoiceText } from './invoiceText';
 import { editDemoInvoice } from './invoiceEditing';
+import { createInvoiceReport } from './invoiceReport';
+import type { InvoiceReport } from './invoiceReport';
 
 type Page =
   | 'dashboard'
@@ -133,6 +135,7 @@ export default function App() {
     [customerDetail, setCustomerDetail] = useState<Customer | null>(null),
     [movementProduct, setMovementProduct] = useState<Product | null>(null);
   const [search, setSearch] = useState(''),
+    [exporting, setExporting] = useState<'pdf' | 'xlsx' | null>(null),
     [filter, setFilter] = useState('all'),
     [from, setFrom] = useState(today().slice(0, 7) + '-01'),
     [to, setTo] = useState(today()),
@@ -294,6 +297,34 @@ export default function App() {
   );
   const includes = (...values: unknown[]) =>
     values.join(' ').toLowerCase().includes(search.toLowerCase());
+  const filteredInvoices = selectedInvoices
+    .filter((i) => includes(i.number, i.customer_name) && (filter === 'all' || i.status === filter))
+    .sort((a, b) => b.created_at.localeCompare(a.created_at));
+  const invoiceReport = createInvoiceReport(filteredInvoices, data.payments, {
+    from,
+    to,
+    search,
+    status: filter,
+  });
+  async function exportInvoices(format: 'pdf' | 'xlsx') {
+    if (exporting || !invoiceReport.rows.length) return;
+    setExporting(format);
+    setError('');
+    try {
+      const { invoiceTablePdf, invoiceTableExcel, downloadReport } =
+        await import('./invoiceTableExport');
+      const filename = `invoices-${from}-to-${to}.${format}`;
+      if (format === 'pdf') invoiceTablePdf(invoiceReport, cfg).save(filename);
+      else downloadReport(await invoiceTableExcel(invoiceReport, cfg), filename);
+      setNotice(
+        `Exported ${invoiceReport.rows.length} matching ${invoiceReport.rows.length === 1 ? 'invoice' : 'invoices'}.`,
+      );
+    } catch (e) {
+      setError(`Could not export invoices: ${errText(e)}`);
+    } finally {
+      setExporting(null);
+    }
+  }
   const buttons = (action: string, onClick: () => void) => (
     <button className="btn primary" onClick={onClick}>
       <Plus size={15} />
@@ -341,7 +372,7 @@ export default function App() {
       )}
     </div>
   );
-  const table = (headers: string[], rows: ReactNode[], count = rows.length) => (
+  const table = (headers: string[], rows: ReactNode[], count = rows.length, footer?: ReactNode) => (
     <div className="panel tablepanel">
       <div className="tablewrap">
         <table>
@@ -353,6 +384,7 @@ export default function App() {
             </tr>
           </thead>
           <tbody>{rows.slice(0, limit)}</tbody>
+          {footer}
         </table>
       </div>
       {rows.length === 0 && <Empty />}
@@ -363,7 +395,7 @@ export default function App() {
       )}
     </div>
   );
-  function invoiceTable(invoices: Invoice[]) {
+  function invoiceTable(invoices: Invoice[], report?: InvoiceReport) {
     return table(
       ['Invoice', 'Customer', 'Notes', 'Issue / due', 'Total', 'Balance', 'Status', 'Details'],
       invoices.map((i) => (
@@ -397,6 +429,20 @@ export default function App() {
           </td>
         </tr>
       )),
+      invoices.length,
+      report && (
+        <tfoot>
+          <tr>
+            <th scope="row" colSpan={4}>
+              Totals ({report.rows.length} matching{' '}
+              {report.rows.length === 1 ? 'invoice' : 'invoices'})
+            </th>
+            <td className="total">{money(report.total)}</td>
+            <td className="total">{money(report.balance)}</td>
+            <td colSpan={2} />
+          </tr>
+        </tfoot>
+      ),
     );
   }
   async function saveEntity(e: FormEvent<HTMLFormElement>) {
@@ -1097,16 +1143,28 @@ export default function App() {
                   value={selectedInvoices.filter((i) => i.status === 'draft').length}
                 />
               </div>
-              {toolbar(['draft', 'pending', 'partially paid', 'paid', 'overdue', 'void'])}
-              {invoiceTable(
-                selectedInvoices
-                  .filter(
-                    (i) =>
-                      includes(i.number, i.customer_name) &&
-                      (filter === 'all' || i.status === filter),
-                  )
-                  .sort((a, b) => b.created_at.localeCompare(a.created_at)),
-              )}
+              <div className="invoice-tools">
+                {toolbar(['draft', 'pending', 'partially paid', 'paid', 'overdue', 'void'])}
+                <div className="invoice-exports">
+                  <button
+                    className="btn"
+                    disabled={!!exporting || !invoiceReport.rows.length}
+                    onClick={() => void exportInvoices('pdf')}
+                  >
+                    <Download size={15} />
+                    {exporting === 'pdf' ? 'Exporting…' : 'Export PDF'}
+                  </button>
+                  <button
+                    className="btn"
+                    disabled={!!exporting || !invoiceReport.rows.length}
+                    onClick={() => void exportInvoices('xlsx')}
+                  >
+                    <Download size={15} />
+                    {exporting === 'xlsx' ? 'Exporting…' : 'Export Excel'}
+                  </button>
+                </div>
+              </div>
+              {invoiceTable(filteredInvoices, invoiceReport)}
             </>
           )}
           {page === 'sales' && (

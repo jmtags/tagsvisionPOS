@@ -44,9 +44,19 @@ try {
   await page.getByRole('button', { name: 'PDF', exact: true }).click();
   await mkdir('artifacts', { recursive: true });
   await (await download).saveAs('artifacts/production-invoice.pdf');
+  await page.getByRole('button', { name: 'Close dialog' }).click();
+  await page.getByRole('navigation').getByRole('button', { name: 'Invoices', exact: true }).click();
+  for (const [button, extension] of [
+    ['Export PDF', 'pdf'],
+    ['Export Excel', 'xlsx'],
+  ]) {
+    const reportDownload = page.waitForEvent('download');
+    await page.getByRole('button', { name: button, exact: true }).click();
+    await (await reportDownload).saveAs(`artifacts/production-invoice-list.${extension}`);
+  }
   if (errors.length) throw new Error(errors.join('\n'));
   console.log(
-    'Built app smoke test passed: login, demo dashboard, invoice detail, PDF download, no page errors.',
+    'Built app smoke test passed: login, demo dashboard, invoice detail, invoice PDF and table PDF/Excel downloads, no page errors.',
   );
 } finally {
   await browser?.close();
