@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.env
+.env.local
+.env.*
+!.env.example
+*.tsbuildinfo
+.supabase/
+.npm-cache/
+test-results/
+playwright-report/
+artifacts/
+supabase/.temp/
+*.log
