@@ -454,6 +454,12 @@ td strong {
   color: #202b40;
   font-weight: 600;
 }
+.invoice-table-notes {
+  min-width: 160px;
+  max-width: 280px;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
 td small {
   display: block;
   color: #8c96a5;

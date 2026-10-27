@@ -365,7 +365,7 @@ export default function App() {
   );
   function invoiceTable(invoices: Invoice[]) {
     return table(
-      ['Invoice', 'Customer', 'Issue / due', 'Total', 'Balance', 'Status', 'Details'],
+      ['Invoice', 'Customer', 'Notes', 'Issue / due', 'Total', 'Balance', 'Status', 'Details'],
       invoices.map((i) => (
         <tr key={i.id}>
           <td>
@@ -374,6 +374,9 @@ export default function App() {
             </button>
           </td>
           <td>{i.customer_name}</td>
+          <td>
+            <div className="invoice-table-notes">{i.notes?.trim() || '—'}</div>
+          </td>
           <td>
             {i.issue_date}
             <small>Due {i.due_date}</small>
